@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkedIn Search Multiplex</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-container">
+        <svg class="logo-icon" viewBox="0 0 24 24" width="24" height="24">
+          <path fill="currentColor" d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.32 1.3v-1.11h-2.8v8.37h2.8v-4.67c0-.25.02-.5.1-.68a1.14 1.14 0 0 1 1-.77c.76 0 1 .58 1 1.42v4.7h2.8M6.5 8.37a1.37 1.37 0 1 0 0-2.75 1.37 1.37 0 0 0 0 2.75M8 18.5V10.13H5.2v8.37H8Z"/>
+        </svg>
+        <h1>LinkMultiplex</h1>
+      </div>
+      <div class="header-badge">Recruiter</div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="app-nav">
+      <button class="nav-tab active" data-tab="tab-search">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <span>Search</span>
+      </button>
+      <button class="nav-tab" data-tab="tab-results">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+        <span>Results</span>
+        <span id="results-count-badge" class="count-badge hidden">0</span>
+      </button>
+      <button class="nav-tab" data-tab="tab-settings">
+        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="app-main">
+      <!-- Search Tab -->
+      <section id="tab-search" class="tab-panel active">
+        <!-- New Query Box -->
+        <div class="card glass">
+          <h3>Add Custom Query</h3>
+          <form id="add-query-form" class="form-row">
+            <input type="text" id="query-input" placeholder="e.g. Recruiter Product Management" required autocomplete="off">
+            <button type="submit" class="btn-primary-sm">
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="3" fill="none"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+              <span>Add</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Queries Selection List -->
+        <div class="card glass">
+          <div class="card-header-row">
+            <h3>Active Search Targets</h3>
+            <div class="bulk-actions">
+              <button id="select-all-queries" class="link-btn">Select All</button>
+              <span class="divider">|</span>
+              <button id="deselect-all-queries" class="link-btn">None</button>
+            </div>
+          </div>
+          <div class="queries-list-container">
+            <div id="queries-list" class="queries-list">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Search Controls -->
+        <div class="card glass main-controls">
+          <div class="control-row">
+            <label for="search-category">Search LinkedIn For:</label>
+            <div class="select-wrapper">
+              <select id="search-category">
+                <option value="posts">Posts / Activity (Recommended for Hiring)</option>
+                <option value="people">People / Candidates</option>
+                <option value="jobs">Job Openings</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="actions-block">
+            <button id="start-btn" class="btn-action btn-start">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              <span>Run Selected Queries</span>
+            </button>
+            <button id="stop-btn" class="btn-action btn-stop hidden">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+              <span>Stop Search Run</span>
+            </button>
+          </div>
+
+          <!-- Progress Panel -->
+          <div id="progress-panel" class="progress-panel hidden">
+            <hr class="panel-divider">
+            <div class="progress-info">
+              <span id="progress-status-label" class="progress-status-text">Ready to run...</span>
+              <span id="progress-ratio" class="progress-percentage">0/0</span>
+            </div>
+            <div class="progress-bar-container">
+              <div id="progress-bar-fill" class="progress-bar-fill" style="width: 0%"></div>
+            </div>
+            <div id="progress-sub-detail" class="progress-sub-detail">Initializing worker tab...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Results Tab -->
+      <section id="tab-results" class="tab-panel">
+        <!-- Search & Filter Controls -->
+        <div class="card glass filters-card">
+          <div class="search-box">
+            <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="results-search" placeholder="Search saved items...">
+          </div>
+          
+          <div class="filter-row">
+            <div class="filter-col">
+              <label for="filter-query">Query</label>
+              <select id="filter-query">
+                <option value="all">All Queries</option>
+                <!-- Dynamically populated -->
+              </select>
+            </div>
+            
+            <div class="filter-col">
+              <label for="filter-status">Recruiting Status</label>
+              <select id="filter-status">
+                <option value="all">All Statuses</option>
+                <option value="New">New</option>
+                <option value="Contacted">Contacted</option>
+                <option value="Skipped">Skipped</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="results-actions">
+            <button id="export-csv-btn" class="btn-secondary-sm">
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>Export CSV</span>
+            </button>
+            <button id="clear-data-btn" class="btn-danger-sm">
+              <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+              <span>Reset Data</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Scraped Results Feed -->
+        <div class="results-container">
+          <div id="no-results-msg" class="no-results-card hidden">
+            <svg viewBox="0 0 24 24" width="32" height="32" stroke="currentColor" stroke-width="1.5" fill="none"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+            <p>No matching items found. Run a search or adjust filters!</p>
+          </div>
+          <div id="results-feed" class="results-feed">
+            <!-- Dynamically populated cards -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Settings Tab -->
+      <section id="tab-settings" class="tab-panel">
+        <div class="card glass">
+          <h3>Scraping Limits</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Pages limit per query</span>
+              <span class="setting-desc">Keep low to stay safe (1-2 pages recommended)</span>
+            </div>
+            <select id="setting-pages-limit">
+              <option value="1">1 Page (10 results)</option>
+              <option value="2">2 Pages (20 results)</option>
+              <option value="3">3 Pages (30 results)</option>
+              <option value="5">5 Pages (50 results)</option>
+            </select>
+          </div>
+          
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Request Safety Delay</span>
+              <span class="setting-desc">Wait time between actions (helps avoid rate limits)</span>
+            </div>
+            <select id="setting-delay">
+              <option value="2">2 Seconds</option>
+              <option value="3">3 Seconds</option>
+              <option value="4" selected>4 Seconds (Safe)</option>
+              <option value="6">6 Seconds</option>
+              <option value="8">8 Seconds (Extra Safe)</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Auto-scroll page</span>
+              <span class="setting-desc">Simulate reading page before harvesting data</span>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="setting-autoscroll" checked>
+              <span class="slider round"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="card glass tips-card">
+          <h3>💡 Recruiter Usage Tips</h3>
+          <ul>
+            <li><strong>Stay Logged In:</strong> Make sure you are already logged in to LinkedIn in your browser.</li>
+            <li><strong>Limit Search Depth:</strong> 1-2 pages per query is usually enough to capture the latest active hires or candidates while keeping your account in the safety zone.</li>
+            <li><strong>Refine Queries:</strong> Try adding local filters (e.g. <i>"Hiring Product marketing" Seattle</i>) to your custom queries if the list gets too noisy.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast Notification Banner -->
+    <div id="toast" class="toast hidden">
+      <span id="toast-message">Message</span>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

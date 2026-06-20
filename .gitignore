@@ -1,0 +1,25 @@
+# Node modules (if any future tooling is added)
+node_modules/
+npm-debug.log*
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor directories
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Environment files
+.env
+.env.local
+
+# Build outputs (if packaging the extension)
+dist/
+build/
+*.zip
+*.crx
+*.pem
