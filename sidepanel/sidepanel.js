@@ -497,17 +497,33 @@ async function scrapeTab(tabId) {
             '.feed-shared-update-v2',
             '.occludable-update',
             'li[class*="search"]',
+            '[class*="search-result"]',
             'article'
           ];
           const start = Date.now();
           while (Date.now() - start < timeout) {
             for (const s of checks) {
-              if (document.querySelectorAll(s).length > 2) return s;
+              if (document.querySelectorAll(s).length > 0) return s;
             }
-            // Fallback: li elements with profile links
+            // Fallback 1: li elements with profile links
             const liWithProfile = [...document.querySelectorAll('li')]
               .filter(li => li.querySelector('a[href*="/in/"]') && li.innerText.trim().length > 40);
-            if (liWithProfile.length > 2) return 'li-profile';
+            if (liWithProfile.length > 0) return 'li-profile';
+
+            // Fallback 2: Any [dir="ltr"] with a nearby author link
+            const ltrElements = document.querySelectorAll('[dir="ltr"]');
+            if (ltrElements.length > 0) {
+              for (const el of ltrElements) {
+                if (el.innerText.trim().length > 20) {
+                   let p = el.parentElement;
+                   for(let i=0; i<6 && p; i++) {
+                     if (p.querySelector('a[href*="/in/"]')) return 'dir-ltr-ancestor';
+                     p = p.parentElement;
+                   }
+                }
+              }
+            }
+            
             await delay(400);
           }
           return null;
@@ -537,12 +553,16 @@ async function scrapeTab(tabId) {
             ['[data-occludable-entity-urn]', 'occludable-urn'],
             ['.feed-shared-update-v2', 'feed-update-v2'],
             ['.occludable-update', 'occludable-update'],
+            ['[class*="search-result"]', 'search-result-generic'],
             ['article', 'article']
           ];
           for (const [sel, name] of strategies) {
             const found = [...document.querySelectorAll(sel)];
-            if (found.length > 0) return { found, strategy: name };
+            // Some selectors might match header/nav elements, so ensure they have real content
+            const valid = found.filter(f => f.innerText.trim().length > 40 && f.querySelector('a'));
+            if (valid.length > 0) return { found: valid, strategy: name };
           }
+          
           // Strategy: <li> with profile link
           const lis = [...document.querySelectorAll('li')].filter(li =>
             li.querySelector('a[href*="/in/"]') && li.innerText.trim().length > 40
@@ -555,6 +575,24 @@ async function scrapeTab(tabId) {
             return u.includes('activity') || u.includes('ugcPost') || u.includes('share');
           });
           if (urns.length > 0) return { found: urns, strategy: 'data-urn' };
+
+          // Strategy (Nuclear): Structural finding via [dir="ltr"] post text and /in/ link
+          const ltrElements = [...document.querySelectorAll('[dir="ltr"]')];
+          const ltrContainers = new Set();
+          ltrElements.forEach(el => {
+              if (el.innerText.trim().length > 20) {
+                  let p = el.parentElement;
+                  for(let i=0; i<6 && p && p !== document.body; i++) {
+                      // Look for an ancestor that contains an author link
+                      if (p.querySelector('a[href*="/in/"]')) {
+                          ltrContainers.add(p);
+                          break;
+                      }
+                      p = p.parentElement;
+                  }
+              }
+          });
+          if (ltrContainers.size > 0) return { found: [...ltrContainers], strategy: 'dir-ltr-ancestor' };
 
           return { found: [], strategy: 'none' };
         }
