@@ -451,175 +451,177 @@ function waitTabLoaded(tabId, timeout = 20000) {
   });
 }
 
-// Scrape by injecting an inline async function — returns data directly, no message passing needed
+// ── Phase 1: Scroll the page to trigger lazy loading.
+// Uses scheduled setTimeouts so the browser paints between each scroll step.
+async function scrollWorkerTab(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const total = Math.max(document.body.scrollHeight, 3000);
+        for (let i = 1; i <= 8; i++) {
+          setTimeout(() => window.scrollTo(0, (total / 8) * i), i * 350);
+        }
+        setTimeout(() => window.scrollTo(0, 0), 3200);
+      }
+    });
+  } catch (e) {
+    console.warn('[LinkMultiplex] Scroll error:', e.message);
+  }
+}
+
+// ── Phase 2: Synchronous DOM scrape — RESILIENT selectors, direct return value.
+// Does NOT use async/await inside func to avoid Chrome executeScript async issues.
 async function scrapeTab(tabId) {
   try {
     const injectionResults = await chrome.scripting.executeScript({
       target: { tabId },
-      func: async () => {
-        // ── Wait for LinkedIn SPA to render results ──────────────────────
-        async function waitForResults(timeout = 12000) {
-          const selectors = [
-            '.reusable-search__result-container',
-            '[data-chameleon-result-urn]',
-            '.entity-result',
-            '.jobs-search-results__list-item'
-          ].join(',');
-          const start = Date.now();
-          while (Date.now() - start < timeout) {
-            if (document.querySelector(selectors)) return true;
-            await new Promise(r => setTimeout(r, 400));
-          }
-          return false;
+      func: () => {
+        /* ── Helpers ─────────────────────────────────────────────────────── */
+        function clean(el) {
+          return el ? el.innerText.trim().replace(/\s+/g, ' ') : '';
         }
-
-        // ── Scroll to trigger lazy loading ───────────────────────────────
-        async function scrollPage() {
-          const total = Math.max(document.body.scrollHeight, 2000);
-          for (let i = 1; i <= 8; i++) {
-            window.scrollTo(0, (total / 8) * i);
-            await new Promise(r => setTimeout(r, 300));
-          }
-          window.scrollTo(0, 0);
-          await new Promise(r => setTimeout(r, 500));
-        }
-
-        // ── Helper: get text from first matching selector ─────────────────
-        function getText(root, sels) {
+        function qs(root, sels) {
           for (const s of sels) {
-            try { const e = root.querySelector(s); if (e) return e.innerText.trim().replace(/\s+/g, ' '); } catch (_) {}
+            try { const e = root.querySelector(s); if (e) return e; } catch (_) {}
           }
-          return '';
+          return null;
+        }
+        function href(el) {
+          if (!el) return '';
+          const h = el.getAttribute('href') || '';
+          try { return new URL(h, location.origin).href.split('?')[0]; } catch (_) { return h; }
         }
 
-        // ── Helper: get cleaned href from first matching selector ─────────
-        function getHref(root, sels) {
-          for (const s of sels) {
-            try {
-              const e = root.querySelector(s);
-              if (e) {
-                const h = e.getAttribute('href') || '';
-                if (!h) continue;
-                return new URL(h, 'https://www.linkedin.com').href.split('?')[0];
-              }
-            } catch (_) {}
-          }
-          return '';
+        /* ── Find result containers — 5 strategies in priority order ──────── */
+        function findContainers() {
+          let found;
+
+          // S1: LinkedIn's long-standing search result list item class
+          found = [...document.querySelectorAll('.reusable-search__result-container')];
+          if (found.length) return { found, s: 'reusable-search' };
+
+          // S2: LinkedIn design-system attribute (very stable)
+          found = [...document.querySelectorAll('[data-chameleon-result-urn]')];
+          if (found.length) return { found, s: 'chameleon-urn' };
+
+          // S3: Occludable entity URN (another stable tracking attribute)
+          found = [...document.querySelectorAll('[data-occludable-entity-urn]')];
+          if (found.length) return { found, s: 'occludable-urn' };
+
+          // S4: Any <li> containing a /in/ profile link with real content
+          found = [...document.querySelectorAll('li')].filter(li =>
+            li.querySelector('a[href*="/in/"]') && li.innerText.trim().length > 40
+          );
+          if (found.length) return { found, s: 'li-with-profile' };
+
+          // S5: data-urn elements matching known LinkedIn post URN patterns
+          found = [...document.querySelectorAll('[data-urn]')].filter(el => {
+            const u = el.getAttribute('data-urn') || '';
+            return u.includes('activity') || u.includes('ugcPost') || u.includes('share') || u.includes('update');
+          });
+          if (found.length) return { found, s: 'data-urn' };
+
+          return { found: [], s: 'none' };
         }
 
-        // ── Detect page type from URL ─────────────────────────────────────
-        const url = window.location.href;
+        /* ── Extract author info without relying on class names ──────────── */
+        function getAuthor(c) {
+          const link = qs(c, ['a[href*="/in/"]', '[class*="actor"] a', '[class*="profile"] a']);
+          if (!link) return { name: '', profileUrl: '', headline: '' };
+          const profileUrl = href(link);
+          const nameEl = link.querySelector('span[aria-hidden="true"]')
+            || link.querySelector('.t-bold span')
+            || link.querySelector('span')
+            || link;
+          const name = clean(nameEl).split('\n')[0].trim();
+          const actor = c.querySelector('[class*="actor"]') || c;
+          const hEl = actor.querySelector('[class*="description"] span[aria-hidden="true"]')
+            || actor.querySelector('[class*="description"]')
+            || actor.querySelector('[class*="subtitle"]');
+          return { name, profileUrl, headline: clean(hEl) };
+        }
+
+        /* ── Extract post text without relying on class names ────────────── */
+        function getPostText(c) {
+          // dir=ltr is set by LinkedIn on all user-generated text content
+          const ltr = c.querySelector('[dir="ltr"]');
+          if (ltr && ltr.innerText.trim().length > 5) return clean(ltr);
+          // Utility/component class fallbacks
+          const el = qs(c, ['.break-words', '[class*="update-components-text"]', '[class*="feed-shared-text"]']);
+          if (el) return clean(el);
+          // Largest text block fallback
+          const blocks = [...c.querySelectorAll('span,p,div')]
+            .map(e => ({ e, t: e.innerText.trim() }))
+            .filter(x => x.t.length > 30 && !x.e.querySelector('a,button'))
+            .sort((a, b) => b.t.length - a.t.length);
+          return blocks.length ? blocks[0].t.replace(/\s+/g, ' ') : '';
+        }
+
+        /* ── Run ─────────────────────────────────────────────────────────── */
+        const url = location.href;
         const pageType = url.includes('/people/') ? 'people'
           : url.includes('/content/') ? 'posts'
-          : url.includes('/jobs/') || url.includes('/jobs/search') ? 'jobs'
+          : (url.includes('/jobs/search') || url.includes('/jobs/view')) ? 'jobs'
           : 'posts';
 
-        // ── Wait + scroll ─────────────────────────────────────────────────
-        await waitForResults(12000);
-        await scrollPage();
-        await new Promise(r => setTimeout(r, 500));
+        const { found: containers, s: strategy } = findContainers();
+        const results = [];
+        const seen = new Set();
 
-        // ── Scrape posts ──────────────────────────────────────────────────
         if (pageType === 'posts') {
-          const containers = document.querySelectorAll(
-            '.reusable-search__result-container, [data-chameleon-result-urn]'
-          );
-          const seen = new Set();
-          const results = [];
           containers.forEach(c => {
             if (seen.has(c)) return; seen.add(c);
-            const author = getText(c, [
-              '.update-components-actor__name span[aria-hidden="true"]',
-              '.update-components-actor__title span[aria-hidden="true"]',
-              '.update-components-actor__title .t-bold span',
-              '.entity-result__title-text a span[aria-hidden="true"]',
-              '.entity-result__title-text a'
-            ]);
-            const authorUrl = getHref(c, [
-              '.update-components-actor__container a',
-              '.update-components-actor__meta a',
-              '.entity-result__title-text a'
-            ]);
-            const headline = getText(c, [
-              '.update-components-actor__description span[aria-hidden="true"]',
-              '.update-components-actor__description',
-              '.entity-result__primary-subtitle'
-            ]);
-            const postText = getText(c, [
-              '.update-components-text .break-words',
-              '.update-components-text span[dir="ltr"]',
-              '.update-components-text',
-              '.feed-shared-text .break-words',
-              '.entity-result__summary',
-              '.entity-result__content-summary'
-            ]);
-            const postUrl = getHref(c, [
-              'a[href*="/feed/update/"]',
-              'a[href*="urn:li:activity"]',
-              'a[href*="/posts/"]'
-            ]);
-            if (!author && !postText) return;
-            results.push({ type: 'posts', author: author || 'LinkedIn Member', authorUrl, headline, postText, postUrl: postUrl || window.location.href });
+            const { name, profileUrl, headline } = getAuthor(c);
+            const postText = getPostText(c);
+            const postUrl = href(qs(c, ['a[href*="/feed/update/"]', 'a[href*="urn:li:activity"]', 'a[href*="/posts/"]']));
+            if (!name && !postText) return;
+            results.push({ type: 'posts', author: name || 'LinkedIn Member', authorUrl: profileUrl, headline, postText, postUrl: postUrl || url });
           });
-          return { success: true, pageType, data: results, url: window.location.href };
-        }
-
-        // ── Scrape people ─────────────────────────────────────────────────
-        if (pageType === 'people') {
-          const containers = document.querySelectorAll(
-            '.reusable-search__result-container, .entity-result'
-          );
-          const seen = new Set();
-          const results = [];
+        } else if (pageType === 'people') {
           containers.forEach(c => {
             if (seen.has(c)) return; seen.add(c);
-            const name = getText(c, [
-              '.entity-result__title-text a span[aria-hidden="true"]',
-              '.entity-result__title-text a'
-            ]).split('\n')[0].trim();
+            const link = c.querySelector('a[href*="/in/"]');
+            if (!link) return;
+            const nameEl = link.querySelector('span[aria-hidden="true"]') || link.querySelector('span') || link;
+            const name = clean(nameEl).split('\n')[0].trim();
             if (!name || name.toLowerCase() === 'linkedin member') return;
             results.push({
-              type: 'people',
-              name,
-              profileUrl: getHref(c, ['.entity-result__title-text a']),
-              headline: getText(c, ['.entity-result__primary-subtitle']),
-              location: getText(c, ['.entity-result__secondary-subtitle']),
-              connection: getText(c, ['.entity-result__badge-text', '.dist-value'])
+              type: 'people', name, profileUrl: href(link),
+              headline: clean(qs(c, ['[class*="primary-subtitle"]', '[class*="subtitle"]'])),
+              location: clean(qs(c, ['[class*="secondary-subtitle"]'])),
+              connection: clean(qs(c, ['[class*="badge"]', '[class*="distance"]']))
             });
           });
-          return { success: true, pageType, data: results, url: window.location.href };
+        } else {
+          containers.forEach(c => {
+            if (seen.has(c)) return; seen.add(c);
+            const jLink = qs(c, ['a.job-card-list__title', 'a[href*="/jobs/view/"]']);
+            const title = clean(jLink);
+            if (!title) return;
+            results.push({
+              type: 'jobs', title, jobUrl: href(jLink),
+              company: clean(qs(c, ['[class*="company-name"]', '[class*="primary-subtitle"]'])),
+              location: clean(qs(c, ['[class*="metadata-item"]', '[class*="secondary-subtitle"]']))
+            });
+          });
         }
 
-        // ── Scrape jobs ───────────────────────────────────────────────────
-        const containers = document.querySelectorAll(
-          '.jobs-search-results__list-item, .job-card-container, .reusable-search__result-container'
-        );
-        const seen = new Set();
-        const results = [];
-        containers.forEach(c => {
-          if (seen.has(c)) return; seen.add(c);
-          const title = getText(c, ['a.job-card-list__title', '.entity-result__title-text a']);
-          if (!title) return;
-          results.push({
-            type: 'jobs',
-            title,
-            jobUrl: getHref(c, ['a.job-card-list__title', '.entity-result__title-text a']),
-            company: getText(c, ['.job-card-container__company-name', '.entity-result__primary-subtitle']),
-            location: getText(c, ['.job-card-container__metadata-item', '.entity-result__secondary-subtitle'])
-          });
-        });
-        return { success: true, pageType, data: results, url: window.location.href };
+        return { success: true, pageType, strategy, containersFound: containers.length, data: results, url };
       }
     });
 
     const result = injectionResults?.[0]?.result;
-    if (!result) return { success: false, error: 'No result returned from injected script', data: [] };
+    if (!result) return { success: false, error: 'executeScript returned null', data: [] };
+    console.log(`[LinkMultiplex] strategy=${result.strategy} containers=${result.containersFound} items=${result.data.length}`);
     return result;
   } catch (err) {
     console.error('[LinkMultiplex] executeScript error:', err.message);
     return { success: false, error: err.message, data: [] };
   }
 }
+
+
 
 async function startSearchWorkflow() {
   const selected = state.queries.filter(q => q.enabled);
@@ -669,13 +671,14 @@ async function startSearchWorkflow() {
         await chrome.tabs.update(state.workerTabId, { url: targetUrl });
         await loadPromise;
 
-        // Give LinkedIn's React SPA time to hydrate after tab load
-        el.progressSubDetail.textContent = `Waiting for results to render…`;
-        await sleep(3500);
+        // Scroll to trigger lazy loading, then wait for content to settle
+        el.progressSubDetail.textContent = `Loading results for "${query.text}"…`;
+        await scrollWorkerTab(state.workerTabId);
+        await sleep(3500); // wait for lazy images + deferred renders after scroll
         if (!state.isSearching) break;
 
-        // Scrape using inline executeScript (no message passing — direct return value)
-        el.progressSubDetail.textContent = `Scraping "${query.text}" — waiting for content…`;
+        // Scrape via sync inline function (resilient selectors, direct return value)
+        el.progressSubDetail.textContent = `Scraping "${query.text}"…`;
         const result = await scrapeTab(state.workerTabId);
         console.log('[LinkMultiplex] Scrape result:', result);
 
