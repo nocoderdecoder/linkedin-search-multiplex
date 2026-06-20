@@ -648,7 +648,7 @@ async function scrapeTab(tabId) {
     if (!result) return { success: false, error: 'executeScript returned null — tab may have navigated away', data: [], debugSnap: {} };
     console.log(`[LinkMultiplex] strategy=${result.strategy} | containers=${result.containersFound} | items=${result.data.length} | url=${result.debugSnap?.pageUrl}`);
     if (result.containersFound === 0) {
-      console.warn('[LinkMultiplex] DEBUG snapshot:', result.debugSnap);
+      console.warn('[LinkMultiplex] DEBUG snapshot stringified:', JSON.stringify(result.debugSnap));
     }
     return result;
   } catch (err) {
@@ -743,7 +743,7 @@ async function startSearchWorkflow() {
           const snap = result.debugSnap || {};
           const shortUrl = (snap.pageUrl || '').replace('https://www.linkedin.com', '');
           showToast(`⚠ 0 results | strategy: ${snap.strategy || 'none'} | url: ${shortUrl || '?'}`);
-          console.warn('[LinkMultiplex] 0-result debug:', snap);
+          console.warn('[LinkMultiplex] 0-result debug stringified:', JSON.stringify(snap));
         }
 
         // Safety delay
