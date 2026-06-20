@@ -424,31 +424,36 @@ function buildSearchUrl(queryText, category, datePosted, page) {
   return `https://www.linkedin.com/search/results/content/?keywords=${encoded}${dateParam}${pageParam}&sortBy=date_posted`;
 }
 
-// Wait for a tab to reach 'complete' — RESOLVES (never rejects) so one slow page can't kill the pipeline
-function waitTabLoaded(tabId, timeout = 20000) {
-  return new Promise((resolve) => {
-    // Check if already complete
-    chrome.tabs.get(tabId)
-      .then(tab => {
-        if (tab.status === 'complete') { resolve(); return; }
-
-        const timer = setTimeout(() => {
-          chrome.tabs.onUpdated.removeListener(listener);
-          console.warn('[LinkMultiplex] Tab load timeout — proceeding anyway');
-          resolve(); // resolve, NOT reject
-        }, timeout);
-
-        function listener(updatedId, info) {
-          if (updatedId === tabId && info.status === 'complete') {
-            clearTimeout(timer);
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
-          }
+async function navigateAndWait(tabId, targetUrl, timeout = 25000) {
+  try {
+    const oldTab = await chrome.tabs.get(tabId).catch(() => ({}));
+    const oldUrl = oldTab.url || '';
+    
+    await chrome.tabs.update(tabId, { url: targetUrl });
+    
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      await sleep(500);
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        // If we requested a search URL, ensure the tab is actually on a search URL
+        // LinkedIn redirects sometimes, so we can't do an exact match, but we can check the path
+        const expectedPath = targetUrl.includes('/search/') ? '/search' : 'linkedin.com';
+        if (tab.url && tab.url.includes(expectedPath) && tab.status === 'complete') {
+          return true;
         }
-        chrome.tabs.onUpdated.addListener(listener);
-      })
-      .catch(() => resolve()); // tab closed — resolve gracefully
-  });
+        // If it's a completely different domain or something weird, just wait a bit
+        if (tab.status === 'complete' && (Date.now() - start > 5000)) {
+          return true;
+        }
+      } catch (e) {
+        return false;
+      }
+    }
+  } catch (err) {
+    console.warn('[LinkMultiplex] navigate error:', err);
+  }
+  return false;
 }
 
 // Scroll the page smoothly to trigger lazy loading — uses scrollBy loop so it's visible
@@ -677,7 +682,7 @@ async function startSearchWorkflow() {
     state.workerTabId = workerTab.id;
 
     // Wait for homepage to fully load
-    await waitTabLoaded(state.workerTabId, 20000);
+    await navigateAndWait(state.workerTabId, 'https://www.linkedin.com/', 20000);
     await sleep(2000); // let React hydrate
     console.log('[LinkMultiplex] Homepage loaded, beginning queries.');
 
@@ -694,10 +699,8 @@ async function startSearchWorkflow() {
         el.progressSubDetail.textContent = `Navigating: "${query.text}" (page ${page})`;
         console.log('[LinkMultiplex] Navigating to:', targetUrl);
 
-        // Navigate
-        const loadPromise = waitTabLoaded(state.workerTabId, 20000);
-        await chrome.tabs.update(state.workerTabId, { url: targetUrl });
-        await loadPromise;
+        // Navigate AND wait for URL to actually change
+        await navigateAndWait(state.workerTabId, targetUrl, 25000);
 
         // Give LinkedIn a moment to stabilise after tab load
         el.progressSubDetail.textContent = `Waiting for results to load…`;
