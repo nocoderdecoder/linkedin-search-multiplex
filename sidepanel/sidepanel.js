@@ -465,7 +465,7 @@ function waitForScrapeMessage(tabId, timeout = 20000) {
 async function startSearchWorkflow() {
   const selected = state.queries.filter(q => q.enabled);
   const category = el.searchCategory.value;
-  const datePosted = el.dateFilter.value; // e.g. "past-week"
+  const datePosted = el.dateFilter.value;
 
   if (selected.length === 0) {
     showToast('Please tick at least one query!');
@@ -476,80 +476,84 @@ async function startSearchWorkflow() {
   el.startBtn.classList.add('hidden');
   el.stopBtn.classList.remove('hidden');
   el.progressPanel.classList.remove('hidden');
-  updateProgress(0, selected.length, 'Starting…', 'Opening LinkedIn…');
+  updateProgress(0, selected.length, 'Starting…', 'Opening LinkedIn homepage…');
 
   try {
-    // Open worker tab — make it ACTIVE so LinkedIn renders search results properly
+    // ── Open to LinkedIn HOMEPAGE first (reliable load, not blank search)
+    // The tab MUST be active so LinkedIn renders its React DOM
     const workerTab = await chrome.tabs.create({
-      url: 'https://www.linkedin.com/search/results/content/',
-      active: true          // must be visible for LinkedIn to render DOM
+      url: 'https://www.linkedin.com/',
+      active: true
     });
     state.workerTabId = workerTab.id;
 
-    // Wait for initial load
-    await waitTabLoaded(state.workerTabId);
-    await sleep(1500);
+    // Wait for homepage to fully load
+    await waitTabLoaded(state.workerTabId, 20000);
+    await sleep(2000); // let React hydrate
+    console.log('[LinkMultiplex] Homepage loaded, beginning queries.');
 
-    // Process each selected query
+    // ── Process each selected query
     for (let i = 0; i < selected.length; i++) {
       if (!state.isSearching) break;
       const query = selected[i];
-      updateProgress(i, selected.length, `Running queries…`, `"${query.text}"`);
+      updateProgress(i, selected.length, `Query ${i + 1} of ${selected.length}`, `"${query.text}"`);
 
       for (let page = 1; page <= state.settings.pagesLimit; page++) {
         if (!state.isSearching) break;
 
         const targetUrl = buildSearchUrl(query.text, category, datePosted, page);
-        el.progressSubDetail.textContent = `"${query.text}" — Page ${page}/${state.settings.pagesLimit}`;
+        el.progressSubDetail.textContent = `Navigating: "${query.text}" (page ${page})`;
         console.log('[LinkMultiplex] Navigating to:', targetUrl);
 
-        // ── Register listener BEFORE navigating (avoids race condition)
-        const scrapePromise = waitForScrapeMessage(state.workerTabId);
+        // ── CRITICAL: register message listener BEFORE executeScript
+        //    (content script sends message during its own async work)
+        const scrapePromise = waitForScrapeMessage(state.workerTabId, 25000);
 
-        // Navigate the tab
-        const loadPromise = waitTabLoaded(state.workerTabId);
+        // Navigate
+        const loadPromise = waitTabLoaded(state.workerTabId, 20000);
         await chrome.tabs.update(state.workerTabId, { url: targetUrl });
         await loadPromise;
 
-        // Extra settle time for SPA hydration
-        await sleep(2500);
+        // Give LinkedIn's React SPA time to hydrate after tab load
+        el.progressSubDetail.textContent = `Waiting for results to render…`;
+        await sleep(3500);
         if (!state.isSearching) break;
 
-        el.progressSubDetail.textContent = `Scraping "${query.text}" page ${page}…`;
+        el.progressSubDetail.textContent = `Scraping "${query.text}"…`;
 
-        // Inject the content script
+        // Inject content script — it will internally wait for DOM elements
         await chrome.scripting.executeScript({
           target: { tabId: state.workerTabId },
           files: ['content/content.js']
         });
 
-        // Await the scrape result (listener was already set up)
+        // Await scrape completion message
         const result = await scrapePromise;
         console.log('[LinkMultiplex] Scrape result:', result);
 
         if (result.success && result.data && result.data.length > 0) {
           await mergeScrapedData(result.data, query.text, category);
-          showToast(`✓ ${result.data.length} items from "${query.text}"`);
+          showToast(`✓ ${result.data.length} results from "${query.text}"`);
         } else if (!result.success) {
           console.warn('[LinkMultiplex] Scrape error:', result.error);
-          showToast(`⚠ Page returned no data: ${result.error || 'Unknown error'}`);
+          showToast(`⚠ No data: ${result.error || 'unknown error'}`);
         } else {
-          showToast(`"${query.text}" — 0 results on page ${page}`);
+          showToast(`"${query.text}" — 0 results on this page`);
         }
 
-        // Safety delay between pages/queries
+        // Safety delay
         if (page < state.settings.pagesLimit || i < selected.length - 1) {
           for (let d = state.settings.delaySeconds; d > 0; d--) {
             if (!state.isSearching) break;
-            el.progressSubDetail.textContent = `Safety delay… ${d}s remaining`;
+            el.progressSubDetail.textContent = `Safety delay: ${d}s…`;
             await sleep(1000);
           }
         }
       }
     }
 
-    updateProgress(selected.length, selected.length, 'Complete!', 'All queries processed.');
-    showToast('🎉 Search run complete!');
+    updateProgress(selected.length, selected.length, '✓ Complete!', 'All queries processed.');
+    showToast('🎉 Scraping complete!');
 
   } catch (err) {
     console.error('[LinkMultiplex] Pipeline error:', err);
@@ -557,7 +561,6 @@ async function startSearchWorkflow() {
   } finally {
     await closeWorkerTab();
     resetRunnerUI();
-    // Auto-switch to Results tab
     document.querySelector('[data-tab="tab-results"]').click();
   }
 }
