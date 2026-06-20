@@ -1,60 +1,53 @@
-// State variables
+// ─── State ────────────────────────────────────────────────────────────────────
 let state = {
   queries: [],
   results: [],
-  settings: {
-    pagesLimit: 1,
-    delaySeconds: 4,
-    autoScroll: true
-  },
+  settings: { pagesLimit: 1, delaySeconds: 4, autoScroll: true },
   isSearching: false,
   workerTabId: null
 };
 
-// DOM Elements
-const elements = {
-  // Navigation
+// ─── DOM Elements ─────────────────────────────────────────────────────────────
+const el = {
   tabs: document.querySelectorAll('.nav-tab'),
   panels: document.querySelectorAll('.tab-panel'),
   resultsBadge: document.getElementById('results-count-badge'),
-  
-  // Search Panel
+
   addQueryForm: document.getElementById('add-query-form'),
   queryInput: document.getElementById('query-input'),
   queriesList: document.getElementById('queries-list'),
   selectAllQueries: document.getElementById('select-all-queries'),
   deselectAllQueries: document.getElementById('deselect-all-queries'),
   searchCategory: document.getElementById('search-category'),
+  dateFilter: document.getElementById('date-filter'),
   startBtn: document.getElementById('start-btn'),
   stopBtn: document.getElementById('stop-btn'),
-  
-  // Progress Panel
+
   progressPanel: document.getElementById('progress-panel'),
   progressStatus: document.getElementById('progress-status-label'),
   progressRatio: document.getElementById('progress-ratio'),
   progressBarFill: document.getElementById('progress-bar-fill'),
   progressSubDetail: document.getElementById('progress-sub-detail'),
-  
-  // Results Panel
+
   resultsSearch: document.getElementById('results-search'),
   filterQuery: document.getElementById('filter-query'),
   filterStatus: document.getElementById('filter-status'),
+  filterPeriod: document.getElementById('filter-period'),
+  filterCategory: document.getElementById('filter-category'),
   resultsFeed: document.getElementById('results-feed'),
   noResultsMsg: document.getElementById('no-results-msg'),
   exportCsvBtn: document.getElementById('export-csv-btn'),
   clearDataBtn: document.getElementById('clear-data-btn'),
-  
-  // Settings Panel
+
   settingPagesLimit: document.getElementById('setting-pages-limit'),
   settingDelay: document.getElementById('setting-delay'),
   settingAutoscroll: document.getElementById('setting-autoscroll'),
-  
-  // Toast
+
   toast: document.getElementById('toast'),
   toastMessage: document.getElementById('toast-message')
 };
 
-// --- Initialization ---
+// ─── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   await loadStateFromStorage();
   initNavigation();
@@ -67,462 +60,381 @@ document.addEventListener('DOMContentLoaded', async () => {
   populateQueryFilter();
 });
 
-// Load state from chrome.storage.local
 async function loadStateFromStorage() {
   const data = await chrome.storage.local.get(['queries', 'scrapedResults', 'scrapeSettings']);
-  
-  if (data.queries) {
-    state.queries = data.queries;
-  }
-  if (data.scrapedResults) {
-    state.results = data.scrapedResults;
-  }
+  if (data.queries) state.queries = data.queries;
+  if (data.scrapedResults) state.results = data.scrapedResults;
   if (data.scrapeSettings) {
     state.settings = data.scrapeSettings;
-    
-    // Set settings UI values
-    elements.settingPagesLimit.value = state.settings.pagesLimit;
-    elements.settingDelay.value = state.settings.delaySeconds;
-    elements.settingAutoscroll.checked = state.settings.autoScroll;
+    el.settingPagesLimit.value = state.settings.pagesLimit;
+    el.settingDelay.value = state.settings.delaySeconds;
+    el.settingAutoscroll.checked = state.settings.autoScroll;
   }
 }
 
-// Navigation Tabs Toggle
+// ─── Navigation ───────────────────────────────────────────────────────────────
 function initNavigation() {
-  elements.tabs.forEach(tab => {
+  el.tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      const targetPanelId = tab.getAttribute('data-tab');
-      
-      elements.tabs.forEach(t => t.classList.remove('active'));
-      elements.panels.forEach(p => p.classList.remove('active'));
-      
+      const target = tab.getAttribute('data-tab');
+      el.tabs.forEach(t => t.classList.remove('active'));
+      el.panels.forEach(p => p.classList.remove('active'));
       tab.classList.add('active');
-      document.getElementById(targetPanelId).classList.add('active');
+      document.getElementById(target).classList.add('active');
     });
   });
 }
 
-// Show toast notifications
-function showToast(message, duration = 3000) {
-  elements.toastMessage.textContent = message;
-  elements.toast.classList.remove('hidden');
-  
-  setTimeout(() => {
-    elements.toast.classList.add('hidden');
-  }, duration);
+// ─── Toast ────────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(message, duration = 3500) {
+  clearTimeout(toastTimer);
+  el.toastMessage.textContent = message;
+  el.toast.classList.remove('hidden');
+  toastTimer = setTimeout(() => el.toast.classList.add('hidden'), duration);
 }
 
-// --- Query Management Section ---
+// ─── Query Management ─────────────────────────────────────────────────────────
 function initQueryManagement() {
-  // Add Query Form Submission
-  elements.addQueryForm.addEventListener('submit', async (e) => {
+  el.addQueryForm.addEventListener('submit', async e => {
     e.preventDefault();
-    const queryText = elements.queryInput.value.trim();
-    if (!queryText) return;
-    
-    // Check if query already exists
-    const exists = state.queries.some(q => q.text.toLowerCase() === queryText.toLowerCase());
-    if (exists) {
-      showToast("Query already exists!");
+    const text = el.queryInput.value.trim();
+    if (!text) return;
+    if (state.queries.some(q => q.text.toLowerCase() === text.toLowerCase())) {
+      showToast('Query already exists!');
       return;
     }
-    
-    const newQuery = {
-      id: 'q_' + Date.now(),
-      text: queryText,
-      type: 'posts', // Default type
-      enabled: true
-    };
-    
-    state.queries.push(newQuery);
+    state.queries.push({ id: 'q_' + Date.now(), text, enabled: true });
     await chrome.storage.local.set({ queries: state.queries });
-    
-    elements.queryInput.value = '';
+    el.queryInput.value = '';
     renderQueries();
     populateQueryFilter();
-    showToast("Query added successfully");
+    showToast('Query added ✓');
   });
-  
-  // Select All/None
-  elements.selectAllQueries.addEventListener('click', async () => {
+
+  el.selectAllQueries.addEventListener('click', async () => {
     state.queries.forEach(q => q.enabled = true);
     await chrome.storage.local.set({ queries: state.queries });
     renderQueries();
   });
-  
-  elements.deselectAllQueries.addEventListener('click', async () => {
+
+  el.deselectAllQueries.addEventListener('click', async () => {
     state.queries.forEach(q => q.enabled = false);
     await chrome.storage.local.set({ queries: state.queries });
     renderQueries();
   });
 }
 
-// Render queries in the checklist
 function renderQueries() {
-  elements.queriesList.innerHTML = '';
-  
+  el.queriesList.innerHTML = '';
   if (state.queries.length === 0) {
-    elements.queriesList.innerHTML = '<div style="padding: 12px; font-size: 11px; color: var(--text-muted); text-align: center;">No queries added yet.</div>';
+    el.queriesList.innerHTML = '<div style="padding:12px;font-size:11px;color:var(--text-muted);text-align:center">No queries yet — add one above.</div>';
     return;
   }
-  
   state.queries.forEach(query => {
     const item = document.createElement('div');
     item.className = 'query-item';
-    
-    // Checkbox and label
+
     const label = document.createElement('label');
     label.className = 'query-checkbox-label';
-    
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = query.enabled;
-    checkbox.addEventListener('change', async () => {
-      query.enabled = checkbox.checked;
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = query.enabled;
+    cb.addEventListener('change', async () => {
+      query.enabled = cb.checked;
       await chrome.storage.local.set({ queries: state.queries });
     });
-    
-    const textSpan = document.createElement('span');
-    textSpan.className = 'query-text';
-    textSpan.textContent = query.text;
-    
-    label.appendChild(checkbox);
-    label.appendChild(textSpan);
-    
-    // Type badge (Posts/People/Jobs)
-    const badge = document.createElement('span');
-    badge.className = 'query-badge';
-    badge.textContent = query.type || 'posts';
-    
-    // Delete Button
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'delete-query-btn';
-    deleteBtn.innerHTML = `
-      <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none">
-        <line x1="18" y1="6" x2="6" y2="18"></line>
-        <line x1="6" y1="6" x2="18" y2="18"></line>
-      </svg>
-    `;
-    deleteBtn.addEventListener('click', async (e) => {
+
+    const txt = document.createElement('span');
+    txt.className = 'query-text';
+    txt.textContent = query.text;
+
+    label.appendChild(cb);
+    label.appendChild(txt);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'delete-query-btn';
+    delBtn.innerHTML = `<svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+    delBtn.addEventListener('click', async e => {
       e.stopPropagation();
       state.queries = state.queries.filter(q => q.id !== query.id);
       await chrome.storage.local.set({ queries: state.queries });
       renderQueries();
       populateQueryFilter();
     });
-    
+
     item.appendChild(label);
-    item.appendChild(badge);
-    item.appendChild(deleteBtn);
-    
-    elements.queriesList.appendChild(item);
+    item.appendChild(delBtn);
+    el.queriesList.appendChild(item);
   });
 }
 
-// --- Settings Listeners ---
+// ─── Settings ─────────────────────────────────────────────────────────────────
 function initSettingsListeners() {
-  // Update setting values in state & storage when user changes them
-  elements.settingPagesLimit.addEventListener('change', async () => {
-    state.settings.pagesLimit = parseInt(elements.settingPagesLimit.value);
-    await saveSettings();
+  el.settingPagesLimit.addEventListener('change', async () => {
+    state.settings.pagesLimit = parseInt(el.settingPagesLimit.value);
+    await chrome.storage.local.set({ scrapeSettings: state.settings });
+    showToast('Settings saved');
   });
-  
-  elements.settingDelay.addEventListener('change', async () => {
-    state.settings.delaySeconds = parseInt(elements.settingDelay.value);
-    await saveSettings();
+  el.settingDelay.addEventListener('change', async () => {
+    state.settings.delaySeconds = parseInt(el.settingDelay.value);
+    await chrome.storage.local.set({ scrapeSettings: state.settings });
+    showToast('Settings saved');
   });
-  
-  elements.settingAutoscroll.addEventListener('change', async () => {
-    state.settings.autoScroll = elements.settingAutoscroll.checked;
-    await saveSettings();
+  el.settingAutoscroll.addEventListener('change', async () => {
+    state.settings.autoScroll = el.settingAutoscroll.checked;
+    await chrome.storage.local.set({ scrapeSettings: state.settings });
+    showToast('Settings saved');
   });
 }
 
-async function saveSettings() {
-  await chrome.storage.local.set({ scrapeSettings: state.settings });
-  showToast("Settings saved");
-}
-
-// --- Results Filter and Render ---
+// ─── Results ──────────────────────────────────────────────────────────────────
 function initResultsListeners() {
-  elements.resultsSearch.addEventListener('input', renderResults);
-  elements.filterQuery.addEventListener('change', renderResults);
-  elements.filterStatus.addEventListener('change', renderResults);
-  
-  // Reset Data Button
-  elements.clearDataBtn.addEventListener('click', async () => {
-    if (confirm("Are you sure you want to clear all scraped candidate/post results? This action cannot be undone.")) {
-      state.results = [];
-      await chrome.storage.local.set({ scrapedResults: [] });
-      renderResults();
-      populateQueryFilter();
-      showToast("Database reset successfully");
-    }
+  el.resultsSearch.addEventListener('input', renderResults);
+  el.filterQuery.addEventListener('change', renderResults);
+  el.filterStatus.addEventListener('change', renderResults);
+  el.filterPeriod.addEventListener('change', renderResults);
+  el.filterCategory.addEventListener('change', renderResults);
+
+  el.clearDataBtn.addEventListener('click', async () => {
+    if (!confirm('Clear ALL scraped results? This cannot be undone.')) return;
+    state.results = [];
+    await chrome.storage.local.set({ scrapedResults: [] });
+    renderResults();
+    populateQueryFilter();
+    showToast('All data cleared');
   });
-  
-  // CSV Export Button
-  elements.exportCsvBtn.addEventListener('click', exportToCSV);
+
+  el.exportCsvBtn.addEventListener('click', exportToCSV);
 }
 
-// Populate the query dropdown filter in results
 function populateQueryFilter() {
-  const currentSelect = elements.filterQuery.value;
-  elements.filterQuery.innerHTML = '<option value="all">All Queries</option>';
-  
-  // Extract unique query texts that exist in results
-  const uniqueQueries = [...new Set(state.results.map(r => r.query))];
-  
-  uniqueQueries.forEach(queryText => {
+  const cur = el.filterQuery.value;
+  el.filterQuery.innerHTML = '<option value="all">All Queries</option>';
+  const unique = [...new Set(state.results.map(r => r.query).filter(Boolean))];
+  unique.forEach(q => {
     const opt = document.createElement('option');
-    opt.value = queryText;
-    opt.textContent = queryText;
-    elements.filterQuery.appendChild(opt);
+    opt.value = q;
+    opt.textContent = q;
+    el.filterQuery.appendChild(opt);
   });
-  
-  // Re-select if it still exists
-  if (uniqueQueries.includes(currentSelect)) {
-    elements.filterQuery.value = currentSelect;
-  }
+  if (unique.includes(cur)) el.filterQuery.value = cur;
 }
 
-// Render filtered search results in the results tab
+// Map datePosted param → approximate ms lookback for client-side filtering
+const PERIOD_MS = {
+  'past-24h': 2 * 24 * 60 * 60 * 1000,   // 48 h (labelled "last 48h" but param is 24h)
+  'past-week': 7 * 24 * 60 * 60 * 1000,
+  'past-month': 30 * 24 * 60 * 60 * 1000,
+  'all': Infinity
+};
+
 function renderResults() {
-  const searchTerm = elements.resultsSearch.value.toLowerCase().trim();
-  const selectedQuery = elements.filterQuery.value;
-  const selectedStatus = elements.filterStatus.value;
-  
-  // Filter the results
+  const term = el.resultsSearch.value.toLowerCase().trim();
+  const selQuery = el.filterQuery.value;
+  const selStatus = el.filterStatus.value;
+  const selPeriod = el.filterPeriod.value;
+  const selCat = el.filterCategory.value;
+  const cutoff = selPeriod !== 'all' ? Date.now() - (PERIOD_MS[selPeriod] || Infinity) : 0;
+
   const filtered = state.results.filter(item => {
-    // 1. Text Search Filter
-    let textMatches = true;
-    if (searchTerm) {
-      const nameMatch = item.name && item.name.toLowerCase().includes(searchTerm);
-      const headlineMatch = item.headline && item.headline.toLowerCase().includes(searchTerm);
-      const authorMatch = item.author && item.author.toLowerCase().includes(searchTerm);
-      const textMatch = item.text && item.text.toLowerCase().includes(searchTerm);
-      const titleMatch = item.title && item.title.toLowerCase().includes(searchTerm);
-      const companyMatch = item.company && item.company.toLowerCase().includes(searchTerm);
-      
-      textMatches = nameMatch || headlineMatch || authorMatch || textMatch || titleMatch || companyMatch;
+    if (selQuery !== 'all' && item.query !== selQuery) return false;
+    if (selStatus !== 'all' && item.status !== selStatus) return false;
+    if (selCat !== 'all' && item.category !== selCat) return false;
+    if (cutoff && new Date(item.scrapedAt).getTime() < cutoff) return false;
+    if (term) {
+      const haystack = [item.name, item.author, item.headline, item.postText, item.title, item.company]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(term)) return false;
     }
-    
-    // 2. Query filter
-    const queryMatches = (selectedQuery === 'all' || item.query === selectedQuery);
-    
-    // 3. Status filter
-    const statusMatches = (selectedStatus === 'all' || item.status === selectedStatus);
-    
-    return textMatches && queryMatches && statusMatches;
+    return true;
   });
-  
-  // Update badge count
+
+  // Badge count
   const newCount = state.results.filter(r => r.status === 'New').length;
-  if (newCount > 0) {
-    elements.resultsBadge.textContent = newCount;
-    elements.resultsBadge.classList.remove('hidden');
-  } else {
-    elements.resultsBadge.classList.add('hidden');
-  }
-  
-  // Render cards
-  elements.resultsFeed.innerHTML = '';
-  
+  el.resultsBadge.textContent = newCount;
+  el.resultsBadge.classList.toggle('hidden', newCount === 0);
+
+  el.resultsFeed.innerHTML = '';
+
   if (filtered.length === 0) {
-    elements.noResultsMsg.classList.remove('hidden');
+    el.noResultsMsg.classList.remove('hidden');
     return;
   }
-  
-  elements.noResultsMsg.classList.add('hidden');
-  
-  filtered.forEach(item => {
-    const card = document.createElement('div');
-    card.className = 'result-card';
-    
-    // Create card header block
-    const header = document.createElement('div');
-    header.className = 'result-card-header';
-    
-    const titleBlock = document.createElement('div');
-    titleBlock.className = 'result-title-block';
-    
-    let mainTitleHtml = '';
-    let subtitleHtml = '';
-    let metaHtml = '';
-    let contentHtml = '';
-    let linkUrl = '';
-    let linkLabel = '';
-    
-    if (item.category === 'people') {
-      linkUrl = item.profileUrl;
-      linkLabel = 'View Profile';
-      mainTitleHtml = item.profileUrl 
-        ? `<a href="${item.profileUrl}" target="_blank">${item.name}</a>`
-        : item.name;
-        
-      subtitleHtml = item.headline ? `<div class="result-sub-title">${item.headline}</div>` : '';
-      
-      const connectionBadge = item.connection ? `<span class="badge-status skipped">${item.connection}</span>` : '';
-      metaHtml = `
-        <div class="result-meta-row">
-          <div class="result-meta-item">
-            <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-            <span>${item.location || 'Unknown Location'}</span>
-          </div>
-          ${connectionBadge}
-        </div>
-      `;
-    } else if (item.category === 'posts') {
-      linkUrl = item.postLink;
-      linkLabel = 'View Post';
-      mainTitleHtml = item.authorLink
-        ? `<a href="${item.authorLink}" target="_blank">${item.author}</a>`
-        : item.author;
-      
-      subtitleHtml = `<div class="result-sub-title">Shared a post</div>`;
-      
-      metaHtml = `
-        <div class="result-meta-row">
-          <div class="result-meta-item">
-            <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2" fill="none"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-            <span>Scraped: ${new Date(item.scrapedAt).toLocaleDateString()}</span>
-          </div>
-        </div>
-      `;
-      
-      contentHtml = `
-        <div class="post-content-block collapsed">
-          ${item.text}
-        </div>
-      `;
-    } else if (item.category === 'jobs') {
-      linkUrl = item.jobLink;
-      linkLabel = 'View Job';
-      mainTitleHtml = item.jobLink
-        ? `<a href="${item.jobLink}" target="_blank">${item.title}</a>`
-        : item.title;
-        
-      subtitleHtml = `<div class="result-sub-title">at <strong>${item.company || 'Unknown Company'}</strong></div>`;
-      
-      metaHtml = `
-        <div class="result-meta-row">
-          <div class="result-meta-item">
-            <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-            <span>${item.location || 'Unknown Location'}</span>
-          </div>
-        </div>
-      `;
-    }
-    
-    // Status Badge at top right
-    const statusClass = (item.status || 'New').toLowerCase();
-    const badge = document.createElement('span');
-    badge.className = `badge-status ${statusClass}`;
-    badge.textContent = item.status || 'New';
-    
-    titleBlock.innerHTML = `
-      <div class="result-main-title">${mainTitleHtml}</div>
-      ${subtitleHtml}
-      ${metaHtml}
-    `;
-    
-    header.appendChild(titleBlock);
-    header.appendChild(badge);
-    
-    card.appendChild(header);
-    
-    if (contentHtml) {
-      const contentWrapper = document.createElement('div');
-      contentWrapper.innerHTML = contentHtml;
-      
-      // Expandable post text event
-      const textBlock = contentWrapper.querySelector('.post-content-block');
-      if (textBlock) {
-        textBlock.addEventListener('click', () => {
-          textBlock.classList.toggle('collapsed');
-        });
-      }
-      
-      card.appendChild(contentWrapper);
-    }
-    
-    // Footer row: Status select dropdown + open url button
-    const actionsRow = document.createElement('div');
-    actionsRow.className = 'result-card-actions';
-    
-    // Dropdown to update status
-    const statusSelect = document.createElement('select');
-    statusSelect.className = 'card-status-select';
-    
-    const statuses = ['New', 'Contacted', 'Skipped'];
-    statuses.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s;
-      opt.textContent = s;
-      if (s === item.status) opt.selected = true;
-      statusSelect.appendChild(opt);
-    });
-    
-    statusSelect.addEventListener('change', async () => {
-      const newStatus = statusSelect.value;
-      
-      // Find item in state and update
+  el.noResultsMsg.classList.add('hidden');
+
+  filtered.forEach(item => el.resultsFeed.appendChild(buildCard(item)));
+}
+
+// ─── Card Builder ─────────────────────────────────────────────────────────────
+function buildCard(item) {
+  const card = document.createElement('div');
+  card.className = 'result-card';
+
+  // ── Category pill
+  const catColors = { posts: '#3b82f6', people: '#8b5cf6', jobs: '#f59e0b' };
+  const catLabels = { posts: 'Post', people: 'Person', jobs: 'Job' };
+  const catPill = `<span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;background:${catColors[item.category] || '#6b7280'}22;color:${catColors[item.category] || '#9ca3af'};border:1px solid ${catColors[item.category] || '#6b7280'}44;text-transform:uppercase;letter-spacing:.5px">${catLabels[item.category] || item.category}</span>`;
+
+  // ── Header: title + status badge
+  const statusClass = (item.status || 'New').toLowerCase();
+  card.innerHTML = `
+    <div class="result-card-header">
+      <div class="result-title-block">
+        ${buildTitle(item)}
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
+        ${catPill}
+        <span class="badge-status ${statusClass}">${item.status || 'New'}</span>
+      </div>
+    </div>
+    ${buildBody(item)}
+    ${buildMeta(item)}
+    ${buildActions(item)}
+  `;
+
+  // Expandable post text
+  const textBlock = card.querySelector('.post-content-block');
+  if (textBlock) {
+    textBlock.addEventListener('click', () => textBlock.classList.toggle('collapsed'));
+  }
+
+  // Status dropdown handler
+  const statusSel = card.querySelector('.card-status-select');
+  if (statusSel) {
+    statusSel.addEventListener('change', async () => {
       const dbItem = state.results.find(r => r.id === item.id);
       if (dbItem) {
-        dbItem.status = newStatus;
+        dbItem.status = statusSel.value;
         await chrome.storage.local.set({ scrapedResults: state.results });
         renderResults();
-        showToast(`Status updated to ${newStatus}`);
+        showToast(`Status → ${statusSel.value}`);
       }
     });
-    
-    // Open Link button
-    let linkBtnHtml = '';
-    if (linkUrl) {
-      linkBtnHtml = `
-        <a href="${linkUrl}" target="_blank" class="card-link-icon-btn">
-          <span>${linkLabel}</span>
-          <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.5" fill="none"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>
-        </a>
-      `;
-    }
-    
-    actionsRow.appendChild(statusSelect);
-    if (linkBtnHtml) {
-      const tempWrapper = document.createElement('div');
-      tempWrapper.innerHTML = linkBtnHtml;
-      actionsRow.appendChild(tempWrapper.firstElementChild);
-    }
-    
-    card.appendChild(actionsRow);
-    elements.resultsFeed.appendChild(card);
-  });
+  }
+
+  return card;
 }
 
-// --- Sequential Search Automation Pipeline ---
+function buildTitle(item) {
+  if (item.category === 'posts') {
+    const link = item.authorUrl
+      ? `<a href="${item.authorUrl}" target="_blank">${item.author || 'LinkedIn Member'}</a>`
+      : (item.author || 'LinkedIn Member');
+    return `
+      <div class="result-main-title">${link}</div>
+      ${item.headline ? `<div class="result-sub-title">${item.headline}</div>` : ''}
+    `;
+  }
+  if (item.category === 'people') {
+    const link = item.profileUrl
+      ? `<a href="${item.profileUrl}" target="_blank">${item.name}</a>`
+      : item.name;
+    return `
+      <div class="result-main-title">${link}</div>
+      ${item.headline ? `<div class="result-sub-title">${item.headline}</div>` : ''}
+    `;
+  }
+  if (item.category === 'jobs') {
+    const link = item.jobUrl
+      ? `<a href="${item.jobUrl}" target="_blank">${item.title}</a>`
+      : item.title;
+    return `
+      <div class="result-main-title">${link}</div>
+      ${item.company ? `<div class="result-sub-title">at <strong>${item.company}</strong></div>` : ''}
+    `;
+  }
+  return '';
+}
+
+function buildBody(item) {
+  if (item.category === 'posts' && item.postText) {
+    return `<div class="post-content-block collapsed">${escHtml(item.postText)}</div>`;
+  }
+  return '';
+}
+
+function buildMeta(item) {
+  const parts = [];
+  const icon = (d) => `<svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2" fill="none">${d}</svg>`;
+  const mapPin = icon('<path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 12 8 12s8-6.75 8-12a8 8 0 0 0-8-8z"/><circle cx="12" cy="10" r="3"/>');
+  const clock = icon('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
+  const link = icon('<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>');
+
+  if (item.location) parts.push(`<div class="result-meta-item">${mapPin}<span>${escHtml(item.location)}</span></div>`);
+  if (item.connection) parts.push(`<div class="result-meta-item"><span class="badge-status skipped">${escHtml(item.connection)}</span></div>`);
+  if (item.scrapedAt) {
+    const d = new Date(item.scrapedAt);
+    parts.push(`<div class="result-meta-item">${clock}<span>Scraped ${d.toLocaleDateString()}</span></div>`);
+  }
+  if (item.query) parts.push(`<div class="result-meta-item">${link}<span style="color:var(--primary)">"${escHtml(item.query)}"</span></div>`);
+
+  return parts.length ? `<div class="result-meta-row">${parts.join('')}</div>` : '';
+}
+
+function buildActions(item) {
+  const link = item.postUrl || item.profileUrl || item.jobUrl || item.authorUrl || '';
+  const label = item.category === 'people' ? 'View Profile' : item.category === 'jobs' ? 'View Job' : 'View Post';
+  const linkBtn = link
+    ? `<a href="${link}" target="_blank" class="card-link-icon-btn">
+        <span>${label}</span>
+        <svg viewBox="0 0 24 24" width="10" height="10" stroke="currentColor" stroke-width="2.5" fill="none"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+      </a>`
+    : '';
+
+  const statuses = ['New', 'Contacted', 'Skipped'];
+  const options = statuses.map(s => `<option value="${s}"${s === (item.status || 'New') ? ' selected' : ''}>${s}</option>`).join('');
+
+  return `
+    <div class="result-card-actions">
+      <select class="card-status-select">${options}</select>
+      ${linkBtn}
+    </div>
+  `;
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// ─── Search Runner ────────────────────────────────────────────────────────────
 function initSearchRunner() {
-  elements.startBtn.addEventListener('click', startSearchWorkflow);
-  elements.stopBtn.addEventListener('click', stopSearchWorkflow);
-  
-  // Listen for completed scraping updates from content scripts
-  chrome.runtime.onMessage.addListener((message, sender) => {
-    // Verified it's from the tab we control
-    if (message.type === 'SCRAPE_COMPLETED' && state.workerTabId && sender.tab && sender.tab.id === state.workerTabId) {
-      handleScrapedData(message);
-    }
-  });
+  el.startBtn.addEventListener('click', startSearchWorkflow);
+  el.stopBtn.addEventListener('click', stopSearchWorkflow);
 }
 
-// Promise wrapper to wait for a tab to finish loading
-function waitTabLoaded(tabId) {
+// Build LinkedIn search URL including time filter
+function buildSearchUrl(queryText, category, datePosted, page) {
+  const encoded = encodeURIComponent(queryText);
+  const pageParam = page > 1 ? `&page=${page}` : '';
+  const dateParam = datePosted ? `&datePosted=${datePosted}` : '';
+
+  if (category === 'people') {
+    return `https://www.linkedin.com/search/results/people/?keywords=${encoded}${pageParam}`;
+  }
+  if (category === 'jobs') {
+    return `https://www.linkedin.com/jobs/search/?keywords=${encoded}${pageParam}`;
+  }
+  // posts / content
+  return `https://www.linkedin.com/search/results/content/?keywords=${encoded}${dateParam}${pageParam}&sortBy=date_posted`;
+}
+
+// Wait for a tab to reach 'complete' status
+function waitTabLoaded(tabId, timeout = 18000) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error("Tab load timed out"));
-    }, 15000); // 15 seconds max wait per page load
-    
-    function listener(updatedTabId, info) {
-      if (updatedTabId === tabId && info.status === 'complete') {
-        clearTimeout(timeout);
+      reject(new Error('Tab load timed out'));
+    }, timeout);
+
+    function listener(updatedId, info) {
+      if (updatedId === tabId && info.status === 'complete') {
+        clearTimeout(timer);
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
       }
@@ -531,295 +443,220 @@ function waitTabLoaded(tabId) {
   });
 }
 
-// Run the scraping workflow sequentially
+// ⚠️ KEY FIX: listener is registered BEFORE executeScript to avoid race condition
+function waitForScrapeMessage(tabId, timeout = 20000) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      chrome.runtime.onMessage.removeListener(listener);
+      resolve({ success: false, error: 'Timeout — no response from content script', data: [] });
+    }, timeout);
+
+    function listener(msg, sender) {
+      if (msg.type === 'SCRAPE_COMPLETED' && sender.tab && sender.tab.id === tabId) {
+        clearTimeout(timer);
+        chrome.runtime.onMessage.removeListener(listener);
+        resolve(msg);
+      }
+    }
+    chrome.runtime.onMessage.addListener(listener);
+  });
+}
+
 async function startSearchWorkflow() {
-  // Sync selected target list
-  const selectedQueries = state.queries.filter(q => q.enabled);
-  const category = elements.searchCategory.value;
-  
-  if (selectedQueries.length === 0) {
-    showToast("Please select at least one query checkbox!");
+  const selected = state.queries.filter(q => q.enabled);
+  const category = el.searchCategory.value;
+  const datePosted = el.dateFilter.value; // e.g. "past-week"
+
+  if (selected.length === 0) {
+    showToast('Please tick at least one query!');
     return;
   }
-  
+
   state.isSearching = true;
-  elements.startBtn.classList.add('hidden');
-  elements.stopBtn.classList.remove('hidden');
-  elements.progressPanel.classList.remove('hidden');
-  
-  updateProgress(0, selectedQueries.length, "Starting...", "Initializing worker tab...");
-  
+  el.startBtn.classList.add('hidden');
+  el.stopBtn.classList.remove('hidden');
+  el.progressPanel.classList.remove('hidden');
+  updateProgress(0, selected.length, 'Starting…', 'Opening LinkedIn…');
+
   try {
-    // 1. Create the worker tab (hidden-ish, unselected foreground)
+    // Open worker tab — make it ACTIVE so LinkedIn renders search results properly
     const workerTab = await chrome.tabs.create({
-      url: 'https://www.linkedin.com',
-      active: false
+      url: 'https://www.linkedin.com/search/results/content/',
+      active: true          // must be visible for LinkedIn to render DOM
     });
     state.workerTabId = workerTab.id;
-    
-    // Update types of checked queries to match selection category
-    selectedQueries.forEach(q => q.type = category);
-    await chrome.storage.local.set({ queries: state.queries });
-    renderQueries();
-    
-    // 2. Loop through each query
-    for (let i = 0; i < selectedQueries.length; i++) {
+
+    // Wait for initial load
+    await waitTabLoaded(state.workerTabId);
+    await sleep(1500);
+
+    // Process each selected query
+    for (let i = 0; i < selected.length; i++) {
       if (!state.isSearching) break;
-      
-      const query = selectedQueries[i];
-      const queryText = query.text;
-      
-      updateProgress(i, selectedQueries.length, `Running queries...`, `Current: "${queryText}"`);
-      
-      // Loop through pages
-      const pagesLimit = state.settings.pagesLimit;
-      for (let page = 1; page <= pagesLimit; page++) {
+      const query = selected[i];
+      updateProgress(i, selected.length, `Running queries…`, `"${query.text}"`);
+
+      for (let page = 1; page <= state.settings.pagesLimit; page++) {
         if (!state.isSearching) break;
-        
-        elements.progressSubDetail.textContent = `Query: "${queryText}" (Page ${page}/${pagesLimit})`;
-        
-        // Construct target LinkedIn URL
-        let baseUrl = '';
-        if (category === 'people') {
-          baseUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(queryText)}&page=${page}`;
-        } else if (category === 'posts') {
-          baseUrl = `https://www.linkedin.com/search/results/content/?keywords=${encodeURIComponent(queryText)}&page=${page}`;
-        } else if (category === 'jobs') {
-          baseUrl = `https://www.linkedin.com/search/results/jobs/?keywords=${encodeURIComponent(queryText)}&page=${page}`;
-        }
-        
-        console.log(`[LinkMultiplex] Navigating worker tab to page ${page}: ${baseUrl}`);
-        
-        // Load the page
+
+        const targetUrl = buildSearchUrl(query.text, category, datePosted, page);
+        el.progressSubDetail.textContent = `"${query.text}" — Page ${page}/${state.settings.pagesLimit}`;
+        console.log('[LinkMultiplex] Navigating to:', targetUrl);
+
+        // ── Register listener BEFORE navigating (avoids race condition)
+        const scrapePromise = waitForScrapeMessage(state.workerTabId);
+
+        // Navigate the tab
         const loadPromise = waitTabLoaded(state.workerTabId);
-        await chrome.tabs.update(state.workerTabId, { url: baseUrl });
+        await chrome.tabs.update(state.workerTabId, { url: targetUrl });
         await loadPromise;
-        
-        // Wait 1.5s additional settling delay before scraping
-        await new Promise(r => setTimeout(r, 1500));
+
+        // Extra settle time for SPA hydration
+        await sleep(2500);
         if (!state.isSearching) break;
-        
-        // Inject content scraper script
+
+        el.progressSubDetail.textContent = `Scraping "${query.text}" page ${page}…`;
+
+        // Inject the content script
         await chrome.scripting.executeScript({
           target: { tabId: state.workerTabId },
           files: ['content/content.js']
         });
-        
-        // Wait for scrape completed message (handled asynchronously by chrome.runtime.onMessage listener)
-        const scrapeResult = await waitForScrapeMessage();
-        
-        if (scrapeResult.success && scrapeResult.data.length > 0) {
-          // Process and save scraped data
-          await mergeScrapedData(scrapeResult.data, queryText, category);
-        } else if (!scrapeResult.success) {
-          console.warn(`[LinkMultiplex] Scrape error reported: ${scrapeResult.error}`);
+
+        // Await the scrape result (listener was already set up)
+        const result = await scrapePromise;
+        console.log('[LinkMultiplex] Scrape result:', result);
+
+        if (result.success && result.data && result.data.length > 0) {
+          await mergeScrapedData(result.data, query.text, category);
+          showToast(`✓ ${result.data.length} items from "${query.text}"`);
+        } else if (!result.success) {
+          console.warn('[LinkMultiplex] Scrape error:', result.error);
+          showToast(`⚠ Page returned no data: ${result.error || 'Unknown error'}`);
         } else {
-          console.log("[LinkMultiplex] No results found on page.");
+          showToast(`"${query.text}" — 0 results on page ${page}`);
         }
-        
-        // Safety Delay between page loads
-        if (page < pagesLimit || i < selectedQueries.length - 1) {
-          const delayMs = state.settings.delaySeconds * 1000;
-          for (let d = delayMs; d > 0; d -= 1000) {
+
+        // Safety delay between pages/queries
+        if (page < state.settings.pagesLimit || i < selected.length - 1) {
+          for (let d = state.settings.delaySeconds; d > 0; d--) {
             if (!state.isSearching) break;
-            elements.progressSubDetail.textContent = `Delaying for safety... (${d / 1000}s remaining)`;
-            await new Promise(r => setTimeout(r, 1000));
+            el.progressSubDetail.textContent = `Safety delay… ${d}s remaining`;
+            await sleep(1000);
           }
         }
       }
     }
-    
-    // Complete
-    updateProgress(selectedQueries.length, selectedQueries.length, "Scrape Run Complete!", "All target queries processed.");
-    showToast("Scraping completed successfully!");
-    
+
+    updateProgress(selected.length, selected.length, 'Complete!', 'All queries processed.');
+    showToast('🎉 Search run complete!');
+
   } catch (err) {
-    console.error("[LinkMultiplex] Scraper pipeline failed:", err);
+    console.error('[LinkMultiplex] Pipeline error:', err);
     showToast(`Error: ${err.message}`);
   } finally {
-    await cleanWorkerTab();
+    await closeWorkerTab();
     resetRunnerUI();
+    // Auto-switch to Results tab
+    document.querySelector('[data-tab="tab-results"]').click();
   }
 }
 
-// Cleanly handles closing the scraping worker tab
-async function cleanWorkerTab() {
+async function stopSearchWorkflow() {
+  state.isSearching = false;
+  el.progressSubDetail.textContent = 'Stopping…';
+  await closeWorkerTab();
+  showToast('Search stopped.');
+  resetRunnerUI();
+}
+
+async function closeWorkerTab() {
   if (state.workerTabId) {
-    try {
-      await chrome.tabs.remove(state.workerTabId);
-    } catch (e) {
-      // tab might already be closed
-    }
+    try { await chrome.tabs.remove(state.workerTabId); } catch (_) {}
     state.workerTabId = null;
   }
 }
 
-// Promisified listener for scraping completion message
-function waitForScrapeMessage() {
-  return new Promise((resolve) => {
-    // Set a fail-safe timeout in case content script fails to message back
-    const timeout = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(tempListener);
-      resolve({ success: false, error: "Scrape response timeout", data: [] });
-    }, 12000); // 12 seconds fail-safe (scrolling takes ~2-3 seconds)
-    
-    function tempListener(msg, sender) {
-      if ((msg.type === 'SCRAPE_COMPLETED') && state.workerTabId && sender.tab && sender.tab.id === state.workerTabId) {
-        clearTimeout(timeout);
-        chrome.runtime.onMessage.removeListener(tempListener);
-        resolve(msg);
-      }
-    }
-    chrome.runtime.onMessage.addListener(tempListener);
-  });
+function updateProgress(current, total, status, sub) {
+  el.progressStatus.textContent = status;
+  el.progressRatio.textContent = `${current}/${total}`;
+  el.progressSubDetail.textContent = sub;
+  const pct = total > 0 ? (current / total) * 100 : 0;
+  el.progressBarFill.style.width = `${pct}%`;
 }
 
-// Parse and merge scraped data into local database, avoiding duplicate URLs
-async function mergeScrapedData(scrapedItems, queryText, category) {
-  let addedCount = 0;
-  
-  scrapedItems.forEach(item => {
-    // Generate unique identification comparison key based on URLs
-    let uniqueKey = '';
-    if (category === 'people') uniqueKey = item.profileUrl;
-    else if (category === 'posts') uniqueKey = item.postLink;
-    else if (category === 'jobs') uniqueKey = item.jobLink;
-    
-    // Check if item already exists in database
-    const existingIndex = state.results.findIndex(r => {
-      if (category === 'people') return r.profileUrl === uniqueKey;
-      if (category === 'posts') return r.postLink === uniqueKey;
-      if (category === 'jobs') return r.jobLink === uniqueKey;
-      return false;
+function resetRunnerUI() {
+  state.isSearching = false;
+  el.startBtn.classList.remove('hidden');
+  el.stopBtn.classList.add('hidden');
+  setTimeout(() => el.progressPanel.classList.add('hidden'), 5000);
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// ─── Merge scraped data into local DB ────────────────────────────────────────
+async function mergeScrapedData(items, queryText, category) {
+  let added = 0;
+  items.forEach(item => {
+    // Determine unique key per category
+    const key = category === 'people' ? item.profileUrl
+      : category === 'jobs' ? item.jobUrl
+      : item.postUrl;
+
+    const idx = state.results.findIndex(r => {
+      if (category === 'people') return r.profileUrl === key;
+      if (category === 'jobs') return r.jobUrl === key;
+      return r.postUrl === key;
     });
-    
-    if (existingIndex > -1) {
-      // Update existing item with newer data (preserve status)
-      const existingStatus = state.results[existingIndex].status;
-      state.results[existingIndex] = {
-        ...item,
-        id: state.results[existingIndex].id,
-        query: queryText,
-        scrapedAt: new Date().toISOString(),
-        status: existingStatus // Preserve New/Contacted/Skipped
-      };
+
+    const record = {
+      ...item,
+      category,
+      query: queryText,
+      scrapedAt: new Date().toISOString(),
+    };
+
+    if (idx > -1) {
+      // Update but preserve recruiter status
+      const oldStatus = state.results[idx].status;
+      state.results[idx] = { ...record, id: state.results[idx].id, status: oldStatus };
     } else {
-      // Add as new entry
-      state.results.push({
-        ...item,
-        id: 'res_' + Math.random().toString(36).substr(2, 9),
-        query: queryText,
-        scrapedAt: new Date().toISOString(),
-        status: 'New'
-      });
-      addedCount++;
+      state.results.push({ ...record, id: 'r_' + Math.random().toString(36).slice(2, 9), status: 'New' });
+      added++;
     }
   });
-  
+
   await chrome.storage.local.set({ scrapedResults: state.results });
   renderResults();
   populateQueryFilter();
-  console.log(`[LinkMultiplex] Merged ${scrapedItems.length} items. Added ${addedCount} new.`);
+  console.log(`[LinkMultiplex] Merged ${items.length} items — ${added} new.`);
 }
 
-// User clicked STOP search workflow
-async function stopSearchWorkflow() {
-  state.isSearching = false;
-  elements.progressSubDetail.textContent = "Aborting operations...";
-  await cleanWorkerTab();
-  showToast("Search workflow stopped by user.");
-  resetRunnerUI();
-}
-
-// Update search pipeline progress bar UI
-function updateProgress(current, total, statusText, subText) {
-  elements.progressStatus.textContent = statusText;
-  elements.progressRatio.textContent = `${current}/${total}`;
-  elements.progressSubDetail.textContent = subText;
-  
-  const pct = total > 0 ? (current / total) * 100 : 0;
-  elements.progressBarFill.style.width = `${pct}%`;
-}
-
-// Revert search run buttons UI
-function resetRunnerUI() {
-  state.isSearching = false;
-  elements.startBtn.classList.remove('hidden');
-  elements.stopBtn.classList.add('hidden');
-  setTimeout(() => {
-    elements.progressPanel.classList.add('hidden');
-  }, 4000); // Keep progress bar visible for 4s after completion
-}
-
-// --- CSV Export Generation ---
+// ─── CSV Export ───────────────────────────────────────────────────────────────
 function exportToCSV() {
-  if (state.results.length === 0) {
-    showToast("No data to export!");
-    return;
-  }
-  
-  // Header row based on columns
-  let csvContent = "data:text/csv;charset=utf-8,";
-  
-  // Headers
-  const headers = ["ID", "Query Keyword", "Category", "Scraped At", "Recruitment Status", "Name/Title", "Source URL", "Subtitle/Company", "Location", "Details/Content"];
-  csvContent += headers.map(h => `"${h.replace(/"/g, '""')}"`).join(",") + "\r\n";
-  
-  // Data rows
-  state.results.forEach(item => {
-    let title = "";
-    let url = "";
-    let subtitle = "";
-    let location = "";
-    let details = "";
-    
-    if (item.category === 'people') {
-      title = item.name;
-      url = item.profileUrl;
-      subtitle = item.headline;
-      location = item.location;
-      details = `Connection: ${item.connection || ''}`;
-    } else if (item.category === 'posts') {
-      title = item.author;
-      url = item.postLink;
-      subtitle = "Shared a post";
-      location = "";
-      details = item.text;
-    } else if (item.category === 'jobs') {
-      title = item.title;
-      url = item.jobLink;
-      subtitle = item.company;
-      location = item.location;
-      details = "";
-    }
-    
-    const row = [
-      item.id,
-      item.query,
-      item.category,
-      item.scrapedAt,
-      item.status,
-      title,
-      url,
-      subtitle,
-      location,
-      details
-    ];
-    
-    csvContent += row.map(val => {
-      const cleanVal = (val || "").toString().replace(/"/g, '""');
-      return `"${cleanVal}"`;
-    }).join(",") + "\r\n";
+  if (state.results.length === 0) { showToast('Nothing to export!'); return; }
+
+  const headers = ['ID', 'Query', 'Category', 'Status', 'Scraped At',
+    'Name / Author / Title', 'Headline / Company', 'Location', 'Profile / Post URL', 'Post Text'];
+
+  const rows = state.results.map(item => {
+    const name = item.name || item.author || item.title || '';
+    const sub = item.headline || item.company || '';
+    const loc = item.location || '';
+    const url = item.profileUrl || item.postUrl || item.jobUrl || item.authorUrl || '';
+    const body = (item.postText || '').replace(/\n/g, ' ');
+    return [item.id, item.query, item.category, item.status, item.scrapedAt, name, sub, loc, url, body]
+      .map(v => `"${(v || '').toString().replace(/"/g, '""')}"`).join(',');
   });
-  
-  // Trigger download
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", `LinkedIn_Multiplex_Recruits_${new Date().toISOString().split('T')[0]}.csv`);
-  document.body.appendChild(link);
-  
-  link.click();
-  document.body.removeChild(link);
-  showToast("CSV Export downloaded!");
+
+  const csv = 'data:text/csv;charset=utf-8,' + [headers.map(h => `"${h}"`).join(','), ...rows].join('\r\n');
+  const a = document.createElement('a');
+  a.href = encodeURI(csv);
+  a.download = `LinkedIn_Multiplex_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  showToast('CSV downloaded!');
 }

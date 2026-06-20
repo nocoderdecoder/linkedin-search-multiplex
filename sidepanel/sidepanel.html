@@ -82,6 +82,18 @@
             </div>
           </div>
 
+          <div class="control-row">
+            <label for="date-filter">Posted Within:</label>
+            <div class="select-wrapper">
+              <select id="date-filter">
+                <option value="past-24h">Last 48 Hours</option>
+                <option value="past-week" selected>Last Week</option>
+                <option value="past-month">Last 30 Days</option>
+                <option value="">Any Time</option>
+              </select>
+            </div>
+          </div>
+
           <div class="actions-block">
             <button id="start-btn" class="btn-action btn-start">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
@@ -133,6 +145,27 @@
                 <option value="New">New</option>
                 <option value="Contacted">Contacted</option>
                 <option value="Skipped">Skipped</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="filter-row">
+            <div class="filter-col">
+              <label for="filter-period">Posted Within</label>
+              <select id="filter-period">
+                <option value="all">Any Time</option>
+                <option value="past-24h">Last 48 Hours</option>
+                <option value="past-week">Last Week</option>
+                <option value="past-month">Last 30 Days</option>
+              </select>
+            </div>
+            <div class="filter-col">
+              <label for="filter-category">Category</label>
+              <select id="filter-category">
+                <option value="all">All Categories</option>
+                <option value="posts">Posts</option>
+                <option value="people">People</option>
+                <option value="jobs">Jobs</option>
               </select>
             </div>
           </div>
