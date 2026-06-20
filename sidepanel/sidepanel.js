@@ -424,42 +424,201 @@ function buildSearchUrl(queryText, category, datePosted, page) {
   return `https://www.linkedin.com/search/results/content/?keywords=${encoded}${dateParam}${pageParam}&sortBy=date_posted`;
 }
 
-// Wait for a tab to reach 'complete' status
-function waitTabLoaded(tabId, timeout = 18000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      reject(new Error('Tab load timed out'));
-    }, timeout);
+// Wait for a tab to reach 'complete' — RESOLVES (never rejects) so one slow page can't kill the pipeline
+function waitTabLoaded(tabId, timeout = 20000) {
+  return new Promise((resolve) => {
+    // Check if already complete
+    chrome.tabs.get(tabId)
+      .then(tab => {
+        if (tab.status === 'complete') { resolve(); return; }
 
-    function listener(updatedId, info) {
-      if (updatedId === tabId && info.status === 'complete') {
-        clearTimeout(timer);
-        chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
-      }
-    }
-    chrome.tabs.onUpdated.addListener(listener);
+        const timer = setTimeout(() => {
+          chrome.tabs.onUpdated.removeListener(listener);
+          console.warn('[LinkMultiplex] Tab load timeout — proceeding anyway');
+          resolve(); // resolve, NOT reject
+        }, timeout);
+
+        function listener(updatedId, info) {
+          if (updatedId === tabId && info.status === 'complete') {
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        }
+        chrome.tabs.onUpdated.addListener(listener);
+      })
+      .catch(() => resolve()); // tab closed — resolve gracefully
   });
 }
 
-// ⚠️ KEY FIX: listener is registered BEFORE executeScript to avoid race condition
-function waitForScrapeMessage(tabId, timeout = 20000) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      chrome.runtime.onMessage.removeListener(listener);
-      resolve({ success: false, error: 'Timeout — no response from content script', data: [] });
-    }, timeout);
+// Scrape by injecting an inline async function — returns data directly, no message passing needed
+async function scrapeTab(tabId) {
+  try {
+    const injectionResults = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: async () => {
+        // ── Wait for LinkedIn SPA to render results ──────────────────────
+        async function waitForResults(timeout = 12000) {
+          const selectors = [
+            '.reusable-search__result-container',
+            '[data-chameleon-result-urn]',
+            '.entity-result',
+            '.jobs-search-results__list-item'
+          ].join(',');
+          const start = Date.now();
+          while (Date.now() - start < timeout) {
+            if (document.querySelector(selectors)) return true;
+            await new Promise(r => setTimeout(r, 400));
+          }
+          return false;
+        }
 
-    function listener(msg, sender) {
-      if (msg.type === 'SCRAPE_COMPLETED' && sender.tab && sender.tab.id === tabId) {
-        clearTimeout(timer);
-        chrome.runtime.onMessage.removeListener(listener);
-        resolve(msg);
+        // ── Scroll to trigger lazy loading ───────────────────────────────
+        async function scrollPage() {
+          const total = Math.max(document.body.scrollHeight, 2000);
+          for (let i = 1; i <= 8; i++) {
+            window.scrollTo(0, (total / 8) * i);
+            await new Promise(r => setTimeout(r, 300));
+          }
+          window.scrollTo(0, 0);
+          await new Promise(r => setTimeout(r, 500));
+        }
+
+        // ── Helper: get text from first matching selector ─────────────────
+        function getText(root, sels) {
+          for (const s of sels) {
+            try { const e = root.querySelector(s); if (e) return e.innerText.trim().replace(/\s+/g, ' '); } catch (_) {}
+          }
+          return '';
+        }
+
+        // ── Helper: get cleaned href from first matching selector ─────────
+        function getHref(root, sels) {
+          for (const s of sels) {
+            try {
+              const e = root.querySelector(s);
+              if (e) {
+                const h = e.getAttribute('href') || '';
+                if (!h) continue;
+                return new URL(h, 'https://www.linkedin.com').href.split('?')[0];
+              }
+            } catch (_) {}
+          }
+          return '';
+        }
+
+        // ── Detect page type from URL ─────────────────────────────────────
+        const url = window.location.href;
+        const pageType = url.includes('/people/') ? 'people'
+          : url.includes('/content/') ? 'posts'
+          : url.includes('/jobs/') || url.includes('/jobs/search') ? 'jobs'
+          : 'posts';
+
+        // ── Wait + scroll ─────────────────────────────────────────────────
+        await waitForResults(12000);
+        await scrollPage();
+        await new Promise(r => setTimeout(r, 500));
+
+        // ── Scrape posts ──────────────────────────────────────────────────
+        if (pageType === 'posts') {
+          const containers = document.querySelectorAll(
+            '.reusable-search__result-container, [data-chameleon-result-urn]'
+          );
+          const seen = new Set();
+          const results = [];
+          containers.forEach(c => {
+            if (seen.has(c)) return; seen.add(c);
+            const author = getText(c, [
+              '.update-components-actor__name span[aria-hidden="true"]',
+              '.update-components-actor__title span[aria-hidden="true"]',
+              '.update-components-actor__title .t-bold span',
+              '.entity-result__title-text a span[aria-hidden="true"]',
+              '.entity-result__title-text a'
+            ]);
+            const authorUrl = getHref(c, [
+              '.update-components-actor__container a',
+              '.update-components-actor__meta a',
+              '.entity-result__title-text a'
+            ]);
+            const headline = getText(c, [
+              '.update-components-actor__description span[aria-hidden="true"]',
+              '.update-components-actor__description',
+              '.entity-result__primary-subtitle'
+            ]);
+            const postText = getText(c, [
+              '.update-components-text .break-words',
+              '.update-components-text span[dir="ltr"]',
+              '.update-components-text',
+              '.feed-shared-text .break-words',
+              '.entity-result__summary',
+              '.entity-result__content-summary'
+            ]);
+            const postUrl = getHref(c, [
+              'a[href*="/feed/update/"]',
+              'a[href*="urn:li:activity"]',
+              'a[href*="/posts/"]'
+            ]);
+            if (!author && !postText) return;
+            results.push({ type: 'posts', author: author || 'LinkedIn Member', authorUrl, headline, postText, postUrl: postUrl || window.location.href });
+          });
+          return { success: true, pageType, data: results, url: window.location.href };
+        }
+
+        // ── Scrape people ─────────────────────────────────────────────────
+        if (pageType === 'people') {
+          const containers = document.querySelectorAll(
+            '.reusable-search__result-container, .entity-result'
+          );
+          const seen = new Set();
+          const results = [];
+          containers.forEach(c => {
+            if (seen.has(c)) return; seen.add(c);
+            const name = getText(c, [
+              '.entity-result__title-text a span[aria-hidden="true"]',
+              '.entity-result__title-text a'
+            ]).split('\n')[0].trim();
+            if (!name || name.toLowerCase() === 'linkedin member') return;
+            results.push({
+              type: 'people',
+              name,
+              profileUrl: getHref(c, ['.entity-result__title-text a']),
+              headline: getText(c, ['.entity-result__primary-subtitle']),
+              location: getText(c, ['.entity-result__secondary-subtitle']),
+              connection: getText(c, ['.entity-result__badge-text', '.dist-value'])
+            });
+          });
+          return { success: true, pageType, data: results, url: window.location.href };
+        }
+
+        // ── Scrape jobs ───────────────────────────────────────────────────
+        const containers = document.querySelectorAll(
+          '.jobs-search-results__list-item, .job-card-container, .reusable-search__result-container'
+        );
+        const seen = new Set();
+        const results = [];
+        containers.forEach(c => {
+          if (seen.has(c)) return; seen.add(c);
+          const title = getText(c, ['a.job-card-list__title', '.entity-result__title-text a']);
+          if (!title) return;
+          results.push({
+            type: 'jobs',
+            title,
+            jobUrl: getHref(c, ['a.job-card-list__title', '.entity-result__title-text a']),
+            company: getText(c, ['.job-card-container__company-name', '.entity-result__primary-subtitle']),
+            location: getText(c, ['.job-card-container__metadata-item', '.entity-result__secondary-subtitle'])
+          });
+        });
+        return { success: true, pageType, data: results, url: window.location.href };
       }
-    }
-    chrome.runtime.onMessage.addListener(listener);
-  });
+    });
+
+    const result = injectionResults?.[0]?.result;
+    if (!result) return { success: false, error: 'No result returned from injected script', data: [] };
+    return result;
+  } catch (err) {
+    console.error('[LinkMultiplex] executeScript error:', err.message);
+    return { success: false, error: err.message, data: [] };
+  }
 }
 
 async function startSearchWorkflow() {
@@ -505,10 +664,6 @@ async function startSearchWorkflow() {
         el.progressSubDetail.textContent = `Navigating: "${query.text}" (page ${page})`;
         console.log('[LinkMultiplex] Navigating to:', targetUrl);
 
-        // ── CRITICAL: register message listener BEFORE executeScript
-        //    (content script sends message during its own async work)
-        const scrapePromise = waitForScrapeMessage(state.workerTabId, 25000);
-
         // Navigate
         const loadPromise = waitTabLoaded(state.workerTabId, 20000);
         await chrome.tabs.update(state.workerTabId, { url: targetUrl });
@@ -519,16 +674,9 @@ async function startSearchWorkflow() {
         await sleep(3500);
         if (!state.isSearching) break;
 
-        el.progressSubDetail.textContent = `Scraping "${query.text}"…`;
-
-        // Inject content script — it will internally wait for DOM elements
-        await chrome.scripting.executeScript({
-          target: { tabId: state.workerTabId },
-          files: ['content/content.js']
-        });
-
-        // Await scrape completion message
-        const result = await scrapePromise;
+        // Scrape using inline executeScript (no message passing — direct return value)
+        el.progressSubDetail.textContent = `Scraping "${query.text}" — waiting for content…`;
+        const result = await scrapeTab(state.workerTabId);
         console.log('[LinkMultiplex] Scrape result:', result);
 
         if (result.success && result.data && result.data.length > 0) {
