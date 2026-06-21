@@ -675,7 +675,8 @@ async function scrapeTab(tabId) {
           detectedSelector,
           strategy,
           containersFound: containers.length,
-          bodyPreview: document.body.innerText.substring(0, 300).replace(/\s+/g, ' ')
+          bodyPreview: document.body.innerText.substring(0, 300).replace(/\s+/g, ' '),
+          html: document.body.innerHTML
         };
 
         return { success: true, pageType, strategy, containersFound: containers.length, data: results, debugSnap };
@@ -685,8 +686,17 @@ async function scrapeTab(tabId) {
     const result = injectionResults?.[0]?.result;
     if (!result) return { success: false, error: 'executeScript returned null — tab may have navigated away', data: [], debugSnap: {} };
     console.log(`[LinkMultiplex] strategy=${result.strategy} | containers=${result.containersFound} | items=${result.data.length} | url=${result.debugSnap?.pageUrl}`);
-    if (result.containersFound === 0) {
-      console.warn('[LinkMultiplex] DEBUG snapshot stringified:', JSON.stringify(result.debugSnap));
+    
+    if (result.data.length === 0 && result.debugSnap?.html) {
+      console.warn('[LinkMultiplex] DEBUG snapshot stringified:', JSON.stringify({ ...result.debugSnap, html: '<omitted_for_log>' }));
+      try {
+        const blob = new Blob([result.debugSnap.html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `linkedin_debug_${Date.now()}.html`;
+        a.click();
+      } catch (e) { console.error('Failed to download debug HTML', e); }
     }
     return result;
   } catch (err) {
